@@ -2,8 +2,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: mys3-deployment
-  labels:
-    app: mys3
 spec:
   replicas: 1
   selector:
@@ -19,3 +17,10 @@ spec:
           image: ghcr.io/tonymascate/mys3:latest
           ports:
             - containerPort: 8080
+          env:
+            - name: MINIO_ENDPOINT
+              value: "http://minio-service:9000"
+            - name: MINIO_ACCESS_KEY
+              value: "minioadmin"
+            - name: MINIO_SECRET_KEY
+              value: "miniopassword"
