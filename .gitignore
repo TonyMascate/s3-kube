@@ -1,0 +1,16 @@
+# Go
+/bin/
+/vendor/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Docker compose volumes (si tu veux pas pousser data)
+data/
