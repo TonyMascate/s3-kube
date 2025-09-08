@@ -3,13 +3,13 @@ kind: Service
 metadata:
   name: minio-service
 spec:
+  type: ClusterIP
   selector:
     app: minio
   ports:
-    - protocol: TCP
+    - name: api
       port: 9000
       targetPort: 9000
-    - protocol: TCP
+    - name: console
       port: 8900
       targetPort: 8900
-  type: ClusterIP
