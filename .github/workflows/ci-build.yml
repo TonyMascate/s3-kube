@@ -79,8 +79,8 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/mys3:latest
-            ghcr.io/${{ github.repository_owner }}/mys3:${{ github.sha }}
+            ghcr.io/${{ toLower(github.repository_owner) }}/mys3:latest
+            ghcr.io/${{ toLower(github.repository_owner) }}/mys3:${{ github.sha }}
 
       - name: Show pushed image
         run: echo "Pushed ghcr.io/${{ github.repository_owner }}/mys3:${{ github.sha }}"
