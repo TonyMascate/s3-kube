@@ -1,69 +1,45 @@
-name: CI - Tests with MinIO
+name: CI - Tests with MinIO (docker-compose)
 
-# déclenche sur push sur main et sur tags (ex: v1.0.0)
 on:
   push:
     branches: ["main"]
-    tags: ["v*"]
+  pull_request:
+    branches: ["main"]
 
 jobs:
   test:
-    name: Run tests (starts MinIO via docker-compose)
     runs-on: ubuntu-latest
-
     steps:
-      # 1) récupère le code
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # 2) installe Go (même version que tu utilises)
-      - name: Setup Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: "1.25"
+      - name: Set up Docker Compose
+        uses: docker/setup-compose-action@v1
+        # optional: with: { version: 'v2.21.0' } to pin version
 
-      # 3) Démarrer docker-compose (ton docker-compose.yml est dans le repo)
-      - name: Start MinIO via docker-compose
-        uses: docker/compose-action@v2
-        with:
-          files: docker-compose.yml
-          run: up -d
-
-      # 4) Attendre que MinIO soit prêt (health endpoint)
-      - name: Wait for MinIO ready
+      - name: Start services with docker-compose
         run: |
-          set -e
-          for i in $(seq 1 60); do
-            if curl -sS http://localhost:9000/minio/health/ready >/dev/null 2>&1; then
+          # run compose in detached mode, adjust file path if needed
+          docker compose -f docker-compose.yml up -d
+
+      - name: Wait for MinIO readiness (simple loop)
+        run: |
+          for i in $(seq 1 30); do
+            if curl --fail http://localhost:9000/minio/health/ready >/dev/null 2>&1; then
               echo "MinIO ready"
               exit 0
             fi
-            echo "Waiting for MinIO... ($i/60)"
-            sleep 1
+            echo "Waiting for MinIO... ($i/30)"
+            sleep 2
           done
-          echo "MinIO not ready after 60s" >&2
+          echo "MinIO not ready after timeout" >&2
           exit 1
 
-      # 5) Afficher quelques infos utiles (debug)
-      - name: Debug info
+      - name: Run Go tests
         run: |
-          echo "=== Docker containers ==="
-          docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
-          echo "=== MinIO logs (tail) ==="
-          docker logs --tail 50 $(docker ps -q --filter "ancestor=minio/minio" | head -n1) || true
+          go test ./... -v
 
-      # 6) Lancer les tests Go
-      - name: Run go tests
-        run: go test ./... -v
-        env:
-          MINIO_ENDPOINT: "localhost:9000"
-          MINIO_ACCESS_KEY: "minioadmin"
-          MINIO_SECRET_KEY: "miniopassword"
-
-      # 7) Nettoyage (toujours exécuté)
-      - name: Stop docker-compose (cleanup)
+      - name: Stop services
         if: always()
-        uses: docker/compose-action@v2
-        with:
-          files: docker-compose.yml
-          run: down -v
+        run: |
+          docker compose -f docker-compose.yml down --volumes --remove-orphans
