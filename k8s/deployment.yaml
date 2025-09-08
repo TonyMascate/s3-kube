@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mys3-deployment
+  labels:
+    app: mys3
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mys3
+  template:
+    metadata:
+      labels:
+        app: mys3
+    spec:
+      containers:
+        - name: mys3
+          image: ghcr.io/tonymascate/mys3:latest
+          ports:
+            - containerPort: 8080
