@@ -79,8 +79,8 @@ jobs:
 
   deploy-to-minikube:
     name: Deploy to local Minikube
-    runs-on: [minikube, self-hosted] # ton runner local
-    needs: build-and-push
+    runs-on: [self-hosted, minikube]
+    needs: [build-and-push]
     steps:
       - uses: actions/checkout@v4
 
@@ -90,23 +90,36 @@ jobs:
           echo "🔍 Vérification de Minikube..."
           minikube status || minikube start --driver=docker
 
+      - name: Prepare lowercase owner
+        id: lc
+        run: echo "lc_owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
       - name: Load image into Minikube
         shell: bash
         run: |
           echo "📦 Chargement de l'image dans Minikube..."
-          minikube image pull ghcr.io/${{ github.repository_owner }}/mys3:${{ github.sha }}
+          minikube image pull ghcr.io/${{ steps.lc.outputs.lc_owner }}/mys3:${{ github.sha }}
 
-      - name: Apply Kubernetes manifests
+      - name: Apply Kubernetes manifests and update image
         shell: bash
         run: |
           echo "🚀 Déploiement de k8s/k8s-all.yaml..."
           kubectl apply -f k8s/k8s-all.yaml
 
-          echo "🔄 Mise à jour de l'image de mys3-deployment..."
-          kubectl set image deployment/mys3-deployment mys3=ghcr.io/${{ github.repository_owner }}/mys3:${{ github.sha }}
+          IMAGE_TAG=${{ github.sha }}
+          IMAGE_NAME="ghcr.io/${{ steps.lc.outputs.lc_owner }}/mys3:${IMAGE_TAG}"
+
+          echo "🔄 Mise à jour de l'image de mys3-deployment avec ${IMAGE_NAME}..."
+          kubectl set image deployment/mys3-deployment mys3=${IMAGE_NAME}
 
           echo "⏳ Attente du déploiement..."
-          kubectl rollout status deployment/mys3-deployment
+          if ! kubectl rollout status deployment/mys3-deployment --timeout=120s; then
+            echo "❌ Le déploiement a échoué. Voici les événements :"
+            kubectl describe deployment mys3-deployment
+            echo "🔍 Logs du pod :"
+            kubectl logs deployment/mys3-deployment || true
+            exit 1
+          fi
 
       - name: Verify deployed services
         shell: bash
