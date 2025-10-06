@@ -92,6 +92,7 @@ jobs:
 
       - name: Prepare lowercase owner
         id: lc
+        shell: bash
         run: echo "lc_owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
 
       - name: Load image into Minikube
