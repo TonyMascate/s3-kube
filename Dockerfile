@@ -9,7 +9,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 # Installe GTK (nécessaire pour github.com/sqweek/dialog)
-RUN apt-get update && apt-get install -y libgtk-3-dev libglib2.0-dev pkg-config
+RUN apk add --no-cache gtk+3.0-dev glib-dev pkgconfig
 
 # copier le reste du projet
 COPY . .
