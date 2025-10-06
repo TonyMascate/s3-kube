@@ -23,6 +23,11 @@ jobs:
 
       - run: docker compose -f docker-compose.yml up -d
 
+      - name: Install GTK dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libglib2.0-dev pkg-config
+
       - name: Run Go tests
         run: go test ./... -v
         env:
@@ -70,7 +75,7 @@ jobs:
 
   deploy-to-minikube:
     name: Deploy to local Minikube
-    runs-on: [minikube-runner] # ton runner local
+    runs-on: [minikube, self-hosted] # ton runner local
     needs: build-and-push
     steps:
       - uses: actions/checkout@v4
@@ -108,50 +113,43 @@ jobs:
     needs: [test, build-and-push, deploy-to-minikube]
     if: always()
     steps:
-      - name: Send notification
-        env:
-          WEBHOOK_URL: ${{ secrets.GOOGLE_CHAT_WEBHOOK }}
-          STATUS: ${{ job.status }}
-          REPO: ${{ github.repository }}
-          ACTOR: ${{ github.actor }}
-          COMMIT: ${{ github.sha }}
-          WORKFLOW: ${{ github.workflow }}
-          RUN_ID: ${{ github.run_id }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      - name: Determine global pipeline status
+        id: result
         run: |
-          if [ "$STATUS" = "success" ]; then
-            COLOR="#34a853"
-            EMOJI="✅"
-            MESSAGE="La pipeline CI/CD s'est terminée avec succès 🎉"
+          if [[ "${{ needs.test.result }}" == "failure" || \
+                "${{ needs.build-and-push.result }}" == "failure" || \
+                "${{ needs.deploy-to-minikube.result }}" == "failure" ]]; then
+            echo "status=failure" >> $GITHUB_OUTPUT
           else
-            COLOR="#ea4335"
-            EMOJI="❌"
-            MESSAGE="La pipeline CI/CD a échoué 🚨"
+            echo "status=success" >> $GITHUB_OUTPUT
           fi
 
-          cat <<EOF > payload.json
-          {
-            "cards": [{
-              "header": {
-                "title": "$EMOJI  Pipeline CI/CD - $REPO",
-                "subtitle": "$MESSAGE",
-                "imageUrl": "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png"
-              },
-              "sections": [{
-                "widgets": [
-                  {"keyValue": {"topLabel": "Statut", "content": "$STATUS"}},
-                  {"keyValue": {"topLabel": "Auteur", "content": "$ACTOR"}},
-                  {"keyValue": {"topLabel": "Commit", "content": "$COMMIT"}},
-                  {"buttons": [{
-                    "textButton": {
-                      "text": "VOIR LE RUN DANS GITHUB ACTIONS",
-                      "onClick": {"openLink": {"url": "$RUN_URL"}}
-                    }
-                  }]}
-                ]
-              }]
-            }]
-          }
-          EOF
+      - name: Prepare notification message
+        id: message
+        run: |
+          STATUS=${{ steps.result.outputs.status }}
+          REPO=${{ github.repository }}
+          ACTOR=${{ github.actor }}
+          COMMIT=${{ github.sha }}
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
-          curl -X POST -H "Content-Type: application/json" -d @payload.json "$WEBHOOK_URL"
+          if [ "$STATUS" = "success" ]; then
+            EMOJI="✅"
+            MESSAGE="La pipeline CI/CD s'est terminée avec succès 🎉"
+            DETAILS="*Statut :* ✅ Succès%0A*Auteur :* $ACTOR%0A*Commit :* [$COMMIT]($RUN_URL)"
+          else
+            EMOJI="❌"
+            MESSAGE="La pipeline CI/CD a échoué 🚨"
+            DETAILS="*Statut :* ❌ Échec%0A*Auteur :* $ACTOR%0A*Commit :* [$COMMIT]($RUN_URL)%0A*Erreur :* Consultez les logs du job défaillant."
+          fi
+
+          echo "text=$EMOJI $MESSAGE%0A$DETAILS" >> $GITHUB_OUTPUT
+
+      - name: Send notification to Google Chat
+        uses: Co-qn/google-chat-notification@v1
+        if: always()
+        with:
+          name: "CI/CD - ${{ github.repository }}"
+          url: ${{ secrets.GOOGLE_CHAT_WEBHOOK }}
+          status: ${{ steps.result.outputs.status }}
+          message: ${{ steps.message.outputs.text }}
