@@ -1,6 +1,5 @@
-name: CI - Test, Build & Push
+name: CI/CD - Test, Build, Deploy (Minikube + Chat)
 
-# permission nécessaire pour que GITHUB_TOKEN puisse pousser dans GHCR
 permissions:
   contents: read
   packages: write
@@ -14,60 +13,50 @@ on:
 
 jobs:
   test:
-    name: Run tests (start MinIO via docker-compose)
+    name: Run tests
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Docker Compose
+      - name: Start services (MinIO via docker-compose)
         uses: docker/setup-compose-action@v1
 
-      - name: Start services with docker-compose
-        run: docker compose -f docker-compose.yml up -d
+      - run: docker compose -f docker-compose.yml up -d
 
-      # - name: Wait for MinIO ready
-      #   run: |
-      #     for i in $(seq 1 60); do
-      #       if curl --fail http://localhost:9000/minio/health/ready >/dev/null 2>&1; then
-      #         echo "MinIO ready"
-      #         exit 0
-      #       fi
-      #       echo "Waiting for MinIO... ($i/60)"
-      #       sleep 2
-      #     done
-      #     echo "MinIO not ready after 60s" >&2
-      #     exit 1
-
-      - name: Run go tests
-        run: |
-          go test ./... -v
+      - name: Run Go tests
+        run: go test ./... -v
         env:
           MINIO_ENDPOINT: "localhost:9000"
           MINIO_ACCESS_KEY: "minioadmin"
           MINIO_SECRET_KEY: "miniopassword"
 
-      - name: Stop services (cleanup)
-        if: always()
+      - if: always()
         run: docker compose -f docker-compose.yml down --volumes --remove-orphans
 
   build-and-push:
-    name: Build and push Docker image to GHCR
+    name: Build & Push Docker image
     runs-on: ubuntu-latest
     needs: test
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry (GHCR)
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: vars
+        name: Determine image tag
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="latest"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
 
       - name: Build and push image
         uses: docker/build-push-action@v5
@@ -76,35 +65,93 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: |
-            ghcr.io/tonymascate/mys3:latest
-            ghcr.io/tonymascate/mys3:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/mys3:${{ steps.vars.outputs.tag }}
+            ghcr.io/${{ github.repository_owner }}/mys3:${{ github.sha }}
 
-      - name: Show pushed image
-        run: echo "Pushed ghcr.io/${{ github.repository_owner }}/mys3:${{ github.sha }}"
-  deploy-to-k8s:
-    name: Deploy to Kubernetes
-    runs-on: ubuntu-latest
+  deploy-to-minikube:
+    name: Deploy to local Minikube
+    runs-on: [minikube-runner] # ton runner local
     needs: build-and-push
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up kubeconfig
+      - name: Ensure Minikube is running
         run: |
-          mkdir -p $HOME/.kube
-          echo "${{ secrets.KUBECONFIG_DATA }}" > $HOME/.kube/config
+          echo "🔍 Vérification de Minikube..."
+          minikube status || minikube start --driver=docker
 
-      - name: Set image for deployment
+      - name: Load image into Minikube
         run: |
-          kubectl set image deployment/mys3-deployment mys3=ghcr.io/tonymascate/mys3:${{ github.sha }}
+          echo "📦 Chargement de l'image dans Minikube..."
+          minikube image pull ghcr.io/${{ github.repository_owner }}/mys3:${{ github.sha }}
 
       - name: Apply Kubernetes manifests
         run: |
-          kubectl apply -f k8s/minio-deployment.yaml
-          kubectl apply -f k8s/deployment.yaml
-          kubectl apply -f k8s/minio-service.yaml
-          kubectl apply -f k8s/service.yaml
+          echo "🚀 Déploiement de k8s/k8s-all.yaml..."
+          kubectl apply -f k8s/k8s-all.yaml
 
-      - name: Verify deployment rollout
-        run: |
+          echo "🔄 Mise à jour de l'image de mys3-deployment..."
+          kubectl set image deployment/mys3-deployment mys3=ghcr.io/${{ github.repository_owner }}/mys3:${{ github.sha }}
+
+          echo "⏳ Attente du déploiement..."
           kubectl rollout status deployment/mys3-deployment
+
+      - name: Verify deployed services
+        run: |
+          echo "✅ Vérification du déploiement :"
+          kubectl get pods
+          kubectl get svc
+
+  notify:
+    name: Notify Google Chat
+    runs-on: ubuntu-latest
+    needs: [test, build-and-push, deploy-to-minikube]
+    if: always()
+    steps:
+      - name: Send notification
+        env:
+          WEBHOOK_URL: ${{ secrets.GOOGLE_CHAT_WEBHOOK }}
+          STATUS: ${{ job.status }}
+          REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+          COMMIT: ${{ github.sha }}
+          WORKFLOW: ${{ github.workflow }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$STATUS" = "success" ]; then
+            COLOR="#34a853"
+            EMOJI="✅"
+            MESSAGE="La pipeline CI/CD s'est terminée avec succès 🎉"
+          else
+            COLOR="#ea4335"
+            EMOJI="❌"
+            MESSAGE="La pipeline CI/CD a échoué 🚨"
+          fi
+
+          cat <<EOF > payload.json
+          {
+            "cards": [{
+              "header": {
+                "title": "$EMOJI  Pipeline CI/CD - $REPO",
+                "subtitle": "$MESSAGE",
+                "imageUrl": "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png"
+              },
+              "sections": [{
+                "widgets": [
+                  {"keyValue": {"topLabel": "Statut", "content": "$STATUS"}},
+                  {"keyValue": {"topLabel": "Auteur", "content": "$ACTOR"}},
+                  {"keyValue": {"topLabel": "Commit", "content": "$COMMIT"}},
+                  {"buttons": [{
+                    "textButton": {
+                      "text": "VOIR LE RUN DANS GITHUB ACTIONS",
+                      "onClick": {"openLink": {"url": "$RUN_URL"}}
+                    }
+                  }]}
+                ]
+              }]
+            }]
+          }
+          EOF
+
+          curl -X POST -H "Content-Type: application/json" -d @payload.json "$WEBHOOK_URL"

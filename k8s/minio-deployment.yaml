@@ -2,8 +2,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: minio-deployment
-  labels:
-    app: minio
 spec:
   replicas: 1
   selector:
@@ -17,11 +15,7 @@ spec:
       containers:
         - name: minio
           image: minio/minio:latest
-          args:
-            - server
-            - /data/minio
-            - --console-address
-            - ":8900"
+          args: ["server", "/data", "--console-address", ":8900"]
           env:
             - name: MINIO_ROOT_USER
               value: "minioadmin"
@@ -32,7 +26,22 @@ spec:
             - containerPort: 8900
           volumeMounts:
             - name: minio-data
-              mountPath: /data/minio
+              mountPath: /data
       volumes:
         - name: minio-data
-          emptyDir: {}
+          emptyDir: {} # pour tester, tu peux mettre un PersistentVolumeClaim plus tard
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-service
+spec:
+  selector:
+    app: minio
+  ports:
+    - name: api # nom arbitraire
+      port: 9000
+      targetPort: 9000
+    - name: console
+      port: 8900
+      targetPort: 8900

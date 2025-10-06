@@ -14,7 +14,8 @@ spec:
     spec:
       containers:
         - name: mys3
-          image: ghcr.io/tonymascate/mys3:latest
+          image: mys3:local # au lieu de GHCR
+          imagePullPolicy: Never # important
           ports:
             - containerPort: 8080
           env:
@@ -24,3 +25,16 @@ spec:
               value: "minioadmin"
             - name: MINIO_SECRET_KEY
               value: "miniopassword"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mys3-service
+spec:
+  type: NodePort # expose pour accéder depuis ton PC
+  selector:
+    app: mys3
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30080 # tu pourras accéder à http://localhost:30080

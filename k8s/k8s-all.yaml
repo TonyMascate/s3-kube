@@ -1,0 +1,120 @@
+# ---------------- MinIO Deployment & Service ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:latest
+          args: ["server", "/data", "--console-address", ":8900"]
+          env:
+            - name: MINIO_ROOT_USER
+              value: "minioadmin"
+            - name: MINIO_ROOT_PASSWORD
+              value: "miniopassword"
+          ports:
+            - name: api
+              containerPort: 9000
+            - name: console
+              containerPort: 8900
+          volumeMounts:
+            - name: minio-data
+              mountPath: /data
+      volumes:
+        - name: minio-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-service
+spec:
+  selector:
+    app: minio
+  ports:
+    - name: api
+      port: 9000
+      targetPort: 9000
+    - name: console
+      port: 8900
+      targetPort: 8900
+
+# ---------------- API Gin Deployment & Service ----------------
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mys3-deployment
+spec:
+  replicas: 1 # nombre initial de pods
+  selector:
+    matchLabels:
+      app: mys3
+  template:
+    metadata:
+      labels:
+        app: mys3
+    spec:
+      containers:
+        - name: mys3
+          image: mys3:local # ton image locale buildée dans Minikube
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 100m
+            limits:
+              cpu: 500m
+          env:
+            - name: MINIO_ENDPOINT
+              value: "minio-service:9000"
+            - name: MINIO_ACCESS_KEY
+              value: "minioadmin"
+            - name: MINIO_SECRET_KEY
+              value: "miniopassword"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mys3-service
+spec:
+  type: NodePort
+  selector:
+    app: mys3
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: 30080
+
+# ---------------- Horizontal Pod Autoscaler ----------------
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: mys3-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: mys3-deployment
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50

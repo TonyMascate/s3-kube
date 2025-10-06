@@ -115,7 +115,6 @@ func listBuckets(c *gin.Context) {
 		})
 		return
 	}
-
 	type Bucket struct {
 		Name         string    `xml:"Name"`
 		CreationDate time.Time `xml:"CreationDate"`
@@ -138,6 +137,40 @@ func listBuckets(c *gin.Context) {
 				"ID":          "local-minio",
 				"DisplayName": "local-user",
 			},
+		},
+	})
+}
+
+// ✅ Lister les fichiers d'un bucker
+func listObjects(c *gin.Context) {
+	bucket := c.Param("bucket")
+	ctx := context.Background()
+
+	objectsCh := minioClient.ListObjects(ctx, bucket, minio.ListObjectsOptions{
+		Recursive: true,
+	})
+
+	type Object struct {
+		Name string `xml:"Name"`
+	}
+
+	var objectList []Object
+	for obj := range objectsCh {
+		if obj.Err != nil {
+			c.XML(http.StatusInternalServerError, gin.H{
+				"Error": gin.H{
+					"Code":    "InternalError",
+					"Message": obj.Err.Error(),
+				},
+			})
+			return
+		}
+		objectList = append(objectList, Object{Name: obj.Key})
+	}
+
+	c.XML(http.StatusOK, gin.H{
+		"ListBucketResult": gin.H{
+			"Objects": objectList,
 		},
 	})
 }
