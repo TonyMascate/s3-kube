@@ -15,6 +15,8 @@ import (
 
 var minioClient *minio.Client
 
+// test
+
 func main() {
 
 	var err error
